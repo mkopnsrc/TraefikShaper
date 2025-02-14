@@ -72,7 +72,7 @@ def overwrite_middleware():
 
     if DEFAULT_PRIVATE_CLASS_SOURCE_RANGE == "True":
         # allow private class ranges as default
-        DEFAULT_SOURCE_RANGE = ['127.0.0.1/32', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
+        DEFAULT_SOURCE_RANGE = ['127.0.0.1/32']
     else:
         # allow localhost only as default
         DEFAULT_SOURCE_RANGE = ['127.0.0.1/32']
@@ -139,12 +139,14 @@ def update_whitelist():
     if ip == None:
         ip = request.remote_addr
 
+    requestHost = request.headers.get('X-Forwarded-Host')
+
     # Check if there is a pending approval for the IP within the last hour
     if f'{ip}/32' not in whitelist['http']['middlewares']['dynamic-ipwhitelist']['IPAllowList']['sourceRange']:
         if ip in ip_last_request:
             last_request_time = ip_last_request[ip]
             if datetime.now() - last_request_time < timedelta(minutes=5):
-                return 'You have already requested approval within the last 5 minutes.', 403
+                return 'You have already requested approval, Please wait for 5 minutes then refresh again.', 403
     else:
         # ip already whitelisted; redirect user
         return redirect('/')
@@ -160,6 +162,8 @@ def update_whitelist():
     # Update expiration time for the IP address
     ip_expiration[ip] = expiration
 
+    #app.logger.info(f"RequestHost: {requestHost}, IP: {ip}")
+
     # Ensure 127.0.0.1/32 is always present
     if '127.0.0.1/32' not in whitelist['http']['middlewares']['dynamic-ipwhitelist']['IPAllowList']['sourceRange']:
         whitelist['http']['middlewares']['dynamic-ipwhitelist']['IPAllowList']['sourceRange'] = ['127.0.0.1/32']
@@ -173,11 +177,12 @@ def update_whitelist():
         pending_approval[ip] = {'expiration_time': expiration_time, 'token': token}
 
         # Construct approval link with FQDN URL, IP address, and token
-        approval_link = f'{APPURL}/approve?ip={ip}&token={token}&expiration_time={expiration_time}'
+        approval_link = f"{APPURL}/approve?ip={ip}&token={token}&expiration_time={expiration_time}"
 
         # URL encode the text message
         random_word = RandomWords().get_random_word()
-        message = f"{approval_link}&validation_code={random_word}"
+        message = f"<strong>Traefik Approval Request</strong><pre>\nDomain: {requestHost}\nClientIP: {ip}\n</pre><a href='{approval_link}&validation_code={random_word}'>APPROVE</a>"
+        #app.logger.info(message)
 
         notification_result = send_notification(message)
 
@@ -271,10 +276,25 @@ def approve_ip():
 
         notification_result = send_notification(message)
 
+        html_response = """
+          <html>
+            <head>
+              <script>
+                setTimeout(function() {
+                    window.close();
+                }, 5000); // 5000 milliseconds = 5 seconds
+              </script>
+            </head>
+            <body>
+              <h2>{{ html_msg }}</h2>
+            </body>
+          </html>
+        """
+
         if notification_result:
-            return 'IP address approved and added to whitelist.', 200
+            return render_template_string(html_response, html_msg="IP address approved and added to whitelist."), 200
         else:
-            return 'IP address approved but notification failed.', 200
+            return render_template_string(html_response, html_msg="IP address approved but notification failed."), 200
 
     return 'Invalid token or IP address.', 403
 
